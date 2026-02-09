@@ -4,13 +4,12 @@ import common
 import simplekml
 import os
 import argparse
-import time_merger
 import pandas as pd
 import math
 import numpy as np
+import settings
 
 # Options
-# DEFAULT_PCI = "connected"
 DEFAULT_PCI = ""
 DEFAULT_KPI = "rsrp"
 DEFAULT_KPI_UNITS = ""
@@ -21,20 +20,19 @@ DEFAULT_ALT_COL = "altitude"
 DEFAULT_COLOR_MAP = None
 
 DEFAULT_LOG_TYPE = "all" # can be "per-cell-kpi" or "all"
-DEFAULT_MERGE_MODE = 1 # Merge mode. 0 = use a third reference time scale. 1 = use cellular. 2 = use gps
 DRAW_TYPE = "line, point"
 LINE_WIDTH = 1 
 USE_PCI_MAP = False
-MARKER_WIDTH = 9000.0   
-eDIRECTED_MARKER_LENGTH = 10
+MARKER_WIDTH = 4.0   
+DIRECTED_MARKER_LENGTH = 10
 DIRECTED_MARKER_SCALE = 1.0
 
 DISCRETE_COLOR_MAP = {1: {"r": 1.0, "g": 0.2, "b": 0.2}, 2: {"r": 1.0, "g": 1.0, "b": 1.0}}
+ALTERNATE_COLORS = [{"r": 1.0, "g": 1.0, "b": 1.0}, {"r": 1.0, "g": 0.0, "b": 0.0}] 
 
 # Constants
 METER_TO_DEGREE = 1/111320.0
 
-#COLOR_MAP = {1: {"r": 0, "g": 0.6, "b": 0} , 2: {"r": 1.0, "g": 0.6, "b": 0.0}, 3: {"r": 0.3, "g": 0.69, "b": 0.32}}
 LON_INDEX = 1
 LAT_INDEX = 2
 GPS_ALT_INDEX = 3
@@ -47,7 +45,8 @@ def add_labels(row,  labels, label_units, custom_label):
     description += f'<p><strong>{custom_label}</strong></p>'
 
     if len(label_units) != len(labels):
-        raise Exception("Length of label units should be equal to length of labels.")
+        label_units = ["" for label in labels]
+        #raise Exception("Length of label units should be equal to length of labels.")
     
     for label,label_unit in zip(labels, label_units):
         description += f'<p>{label} = {row[label]} {label_unit}</p>'
@@ -121,7 +120,6 @@ def _create_kml_triangle(curr_pt, next_pt):
     pts.append(common.flip_lat_lon(common.ecef_to_lla(tri_left)))
     return(pts)
 
-# -i ~/Work/AERPAW/ExperimentData/July_2_2024_Flight_3/PawPrints/pawprints_all.csv -k rsrp --draw-type triangle --pci connected --custom-label PawPrints -u dBm --kpi-min -90 --kpi-max -60
 
 def generate_kml(options, additional_filters = None):
     numEntries = -1
@@ -178,7 +176,7 @@ def generate_kml(options, additional_filters = None):
         else:
             kpi_gps_pd = log_pd[columns]
             kpi_gps_pd = kpi_gps_pd.dropna(subset=[options.kpi])
-            print(kpi_gps_pd)
+            #print(kpi_gps_pd)
 
         kpi_indices = np.arange(numEntries)
         gps_indices = np.arange(numEntries)
@@ -191,10 +189,13 @@ def generate_kml(options, additional_filters = None):
 
     kpi_min = min(kpi_gps_pd[options.kpi]) if options.kpi_min == None else options.kpi_min
     kpi_max = max(kpi_gps_pd[options.kpi]) if options.kpi_max == None else options.kpi_max
+    print("min-kpi", "max-kpi = ")
     print(kpi_min, kpi_max)
     if kpi_min == kpi_max:
         kpi_min = kpi_max - 1
     numRows = len(kpi_gps_pd)
+    if options.alternate_colors:
+        curr_color_index = 0
 
     for i in range(numRows):
         lat = kpi_gps_pd.iloc[i]["latitude"]
@@ -206,11 +207,14 @@ def generate_kml(options, additional_filters = None):
 
         if options.use_discrete_colormap:
             if kpi in DISCRETE_COLOR_MAP:
-                if kpi == "3":
-                    input("3")
                 color = DISCRETE_COLOR_MAP[kpi]
             else:
                 color = {"r": 0, "g": 0, "b": 0}
+        elif options.alternate_colors and i < (len(kpi_gps_pd) - 1):
+            if kpi != kpi_gps_pd.iloc[i+1][options.kpi]:
+                curr_color_index = 1 if curr_color_index == 0 else 0
+            color = ALTERNATE_COLORS[curr_color_index]
+        
         else:
             color = common.value_to_color(kpi, kpi_min, kpi_max, options.colormap)
 
@@ -226,7 +230,7 @@ def generate_kml(options, additional_filters = None):
                 geom.style.linestyle.color = kml_color
                 geom.style.linestyle.width = LINE_WIDTH
                 geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-                geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p>'
+                geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p>'
 
 
         if "point" in options.draw_type:
@@ -241,7 +245,7 @@ def generate_kml(options, additional_filters = None):
             geom.style.linestyle.color = kml_color
             geom.style.linestyle.width = MARKER_WIDTH
             geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p>'
+            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p>'
 
         if "circle" in options.draw_type:
             geom = kml.newpolygon()
@@ -251,7 +255,7 @@ def generate_kml(options, additional_filters = None):
             geom.style.linestyle.color = kml_color
             geom.style.linestyle.width = MARKER_WIDTH
             geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p>'
+            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p>'
 
         if "directed" in options.draw_type:
             yaw = kpi_gps_pd.iloc[i]["yaw"]
@@ -274,7 +278,7 @@ def generate_kml(options, additional_filters = None):
             geom.style.linestyle.color = kml_color
             geom.style.linestyle.width = MARKER_WIDTH
             geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p><p>yaw = {round(yaw*180/math.pi,2)} ° </p><p> pitch = {round(pitch*180/math.pi,2)} °</p> <p> roll = {round(roll*180/math.pi,2)} °</p><p> v_north = {round(vx,2) } m/s</p><p> v_east = {round(vy,2) } m/s</p><p> v_down = {round(vz,2) } m/s</p>'
+            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p><p>yaw = {round(yaw*180/math.pi,2)} ° </p><p> pitch = {round(pitch*180/math.pi,2)} °</p> <p> roll = {round(roll*180/math.pi,2)} °</p><p> v_north = {round(vx,2) } m/s</p><p> v_east = {round(vy,2) } m/s</p><p> v_down = {round(vz,2) } m/s</p>'
 
             geom = kml.newpolygon()
             geom.altitudemode = simplekml.AltitudeMode.relativetoground
@@ -283,7 +287,7 @@ def generate_kml(options, additional_filters = None):
             geom.style.linestyle.color = kml_color
             geom.style.linestyle.width = MARKER_WIDTH
             geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p><p>yaw = {round(yaw*180/math.pi,2)} ° </p><p> pitch = {round(pitch*180/math.pi,2)} °</p> <p> roll = {round(roll*180/math.pi,2)} °</p><p> v_north = {round(vx,2) } m/s</p><p> v_east = {round(vy,2) } m/s</p><p> v_down = {round(vz,2) } m/s</p>'            
+            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p><p>yaw = {round(yaw*180/math.pi,2)} ° </p><p> pitch = {round(pitch*180/math.pi,2)} °</p> <p> roll = {round(roll*180/math.pi,2)} °</p><p> v_north = {round(vx,2) } m/s</p><p> v_east = {round(vy,2) } m/s</p><p> v_down = {round(vz,2) } m/s</p>'            
             
             geom = kml.newlinestring(coords=[(lon, lat, alt+5), (lon, lat, alt+5-vz*METER_TO_DEGREE)])
             geom.altitudemode = simplekml.AltitudeMode.relativetoground
@@ -320,7 +324,7 @@ def generate_kml(options, additional_filters = None):
             geom.style.linestyle.color = kml_color
             geom.style.linestyle.width = MARKER_WIDTH
             geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p>'
+            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p>'
             
             geom = kml.newpolygon()
             geom.altitudemode = simplekml.AltitudeMode.relativetoground
@@ -338,7 +342,7 @@ def generate_kml(options, additional_filters = None):
             geom.style.linestyle.color = kml_color
             geom.style.linestyle.width = MARKER_WIDTH
             geom.description = add_labels(kpi_gps_pd.iloc[i], options.labels, options.label_units, options.custom_label)
-            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> index = {i}</p>'
+            geom.description += f'<p>{options.kpi} = {kpi} {options.kpi_units}</p><p>(lat, lon) = ({lat},{lon})</p><p> altitude = {alt} m</p><p> log row = {i}</p>'
 
     if options.output_log:
         kml_fName = os.path.join(options.workarea, options.output_log)
@@ -368,7 +372,9 @@ if __name__ == "__main__":
     parser.add_argument('--log-type', nargs='+',default=DEFAULT_LOG_TYPE, help= "Input CSV log type.")   
     parser.add_argument('--alt-col', nargs='+', default=DEFAULT_ALT_COL, help= "Altitude column.")   
     parser.add_argument('--use-discrete-colormap', action="store_true", help="Use a discrete color map, specified in the code, for KPI values")
-    parser.add_argument('--label-units', nargs='+', default=[], help= "Units of the fields to display in the pop-up label.")   
+    parser.add_argument('--alternate-colors', action="store_true", help="Change colors when the KPI changes")
+    parser.add_argument('--label-units', nargs='+', default=[], help= "Units of the fields to display in the pop-up label.")
+    parser.add_argument('--marker-width', default=MARKER_WIDTH, help="Marker size")
     parser.add_argument('--filters', type=str,)
     options = parser.parse_args()
     generate_kml(options)
