@@ -478,7 +478,7 @@ def generate_kml(options, additional_filters=None):
     kml.save(kml_fName)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Generate KML file of the specified KPI and cell PCI"
     )
@@ -598,3 +598,7 @@ if __name__ == "__main__":
     )
     options = parser.parse_args()
     generate_kml(options)
+
+
+if __name__ == "__main__":
+    main()
