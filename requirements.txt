@@ -1,7 +1,0 @@
-numpy
-matplotlib
-scipy
-pandas
-simplekml
-pyproj
-toml
